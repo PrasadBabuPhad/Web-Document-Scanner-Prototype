@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenCV.js Document Scanner</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f7;
+            color: #333;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        .canvas-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+        }
+        .canvas-box {
+            text-align: center;
+        }
+        canvas {
+            border: 2px dashed #ccc;
+            max-width: 100%;
+            background-color: #fafafa;
+            cursor: crosshair;
+        }
+        #status {
+            font-weight: bold;
+            color: #0066cc;
+            padding: 10px;
+            background: #e6f2ff;
+            border-radius: 6px;
+            text-align: center;
+            word-break: break-all;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            justify-content: center;
+        }
+        button, input[type="file"] {
+            padding: 10px 20px;
+            border-radius: 6px;
+            border: none;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        button {
+            background-color: #0071e3;
+            color: white;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+
+<h2>Web-Based Document Scanner</h2>
+<p>Instructions: Upload a tilted document photo. Click 4 times on the image to select the corners in this order: <strong>Top-Left → Top-Right → Bottom-Right → Bottom-Left</strong>. Then click "Flatten Document".</p>
+
+<div class="container">
+    <div id="status">Loading OpenCV.js Engine... Please wait.</div>
+    
+    <div class="controls">
+        <input type="file" id="fileInput" accept="image/*" disabled />
+        <button id="processBtn" disabled>Flatten Document</button>
+        <button id="resetBtn">Reset Points</button>
+    </div>
+
+    <div class="canvas-container">
+        <div class="canvas-box">
+            <h3>Original (Click 4 Corners)</h3>
+            <canvas id="srcCanvas"></canvas>
+        </div>
+        <div class="canvas-box">
+            <h3>Flattened Output</h3>
+            <canvas id="dstCanvas"></canvas>
+        </div>
+    </div>
+</div>
+
+<script type="text/javascript">
+    // Global hook for OpenCV loading
+    var Module = {
+        onRuntimeInitialized: function() {
+            document.getElementById('status').style.background = "#e2fbe4";
+            document.getElementById('status').style.color = "#1e7e34";
+            document.getElementById('status').innerText = "🚀 OpenCV.js Ready! Please select your file.";
+            document.getElementById('fileInput').disabled = false;
+        }
+    };
+</script>
+
+<script async src="https://docs.opencv.org/4.5.4/opencv.js" type="text/javascript"></script>
+
+<script>
+    const srcCanvas = document.getElementById('srcCanvas');
+    const dstCanvas = document.getElementById('dstCanvas');
+    const ctx = srcCanvas.getContext('2d');
+    const fileInput = document.getElementById('fileInput');
+    const processBtn = document.getElementById('processBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const statusText = document.getElementById('status');
+
+    let clickedPoints = [];
+    let imgElement = new Image();
+
+    // Handle Image Upload
+    fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            imgElement.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+
+    imgElement.onload = () => {
+        const maxDim = 500;
+        let scale = Math.min(maxDim / imgElement.width, maxDim / imgElement.height);
+        srcCanvas.width = imgElement.width * scale;
+        srcCanvas.height = imgElement.height * scale;
+        
+        ctx.drawImage(imgElement, 0, 0, srcCanvas.width, srcCanvas.height);
+        clickedPoints = [];
+        processBtn.disabled = true;
+        statusText.innerText = "Click the 4 corners of the paper on the left image.";
+    };
+
+    // Capture 4 Corner Clicks
+    srcCanvas.addEventListener('click', (e) => {
+        if (clickedPoints.length >= 4) return;
+
+        const rect = srcCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        clickedPoints.push({x, y});
+
+        ctx.fillStyle = '#ff3b30';
+        ctx.beginPath();
+        ctx.arc(x, y, 6, 0, 2 * Math.PI);
+        ctx.fill();
+        
+        ctx.fillStyle = 'white';
+        ctx.font = '12px Arial';
+        ctx.fillText(clickedPoints.length, x + 8, y - 8);
+
+        if (clickedPoints.length === 4) {
+            processBtn.disabled = false;
+            statusText.innerText = "4 corners set! Click 'Flatten Document'.";
+        }
+    });
+
+    resetBtn.addEventListener('click', () => {
+        if (imgElement.src) {
+            ctx.drawImage(imgElement, 0, 0, srcCanvas.width, srcCanvas.height);
+            clickedPoints = [];
+            processBtn.disabled = true;
+            statusText.innerText = "Points reset. Click the 4 corners again.";
+        }
+    });
+
+    // Helper function to automatically sort points in TL -> TR -> BR -> BL order
+    function sortPoints(points) {
+        // 1. Sort by X coordinate to split into Left and Right pairs
+        const sortedByX = [...points].sort((a, b) => a.x - b.x);
+        const leftPoints = sortedByX.slice(0, 2);
+        const rightPoints = sortedByX.slice(2, 4);
+
+        // 2. Sort the left points by Y to get Top-Left and Bottom-Left
+        const [tl, bl] = leftPoints.sort((a, b) => a.y - b.y);
+
+        // 3. Sort the right points by Y to get Top-Right and Bottom-Right
+        const [tr, br] = rightPoints.sort((a, b) => a.y - b.y);
+
+        return [tl, tr, br, bl];
+    }
+
+    // Perspective Warping Logic with Error Catching
+    processBtn.addEventListener('click', () => {
+        statusText.innerText = "Processing matrix transformations...";
+        
+        try {
+            let src = cv.imread('srcCanvas');
+            let dst = new cv.Mat();
+
+            // CRITICAL FIX: Automatically sort the user's clicks before processing
+            const orderedPoints = sortPoints(clickedPoints);
+
+            // Use the newly orderedPoints array instead of raw clickedPoints
+            let srcCoords = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                orderedPoints[0].x, orderedPoints[0].y, // Safely assigned Top-Left
+                orderedPoints[1].x, orderedPoints[1].y, // Safely assigned Top-Right
+                orderedPoints[2].x, orderedPoints[2].y, // Safely assigned Bottom-Right
+                orderedPoints[3].x, orderedPoints[3].y  // Safely assigned Bottom-Left
+            ]);
+
+            const outWidth = 400;
+            const outHeight = 565; 
+
+            let dstCoords = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                0, 0,
+                outWidth, 0,
+                outWidth, outHeight,
+                0, outHeight
+            ]);
+
+            let M = cv.getPerspectiveTransform(srcCoords, dstCoords);
+            let dsize = new cv.Size(outWidth, outHeight);
+
+            cv.warpPerspective(src, dst, M, dsize, cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
+            cv.imshow('dstCanvas', dst);
+
+            // Clean up WebAssembly memory allocations
+            src.delete(); dst.delete(); M.delete(); srcCoords.delete(); dstCoords.delete();
+            
+            statusText.innerText = "🎉 Document flattened perfectly!";
+        } catch (err) {
+            statusText.style.background = "#fce8e6";
+            statusText.style.color = "#a71d2a";
+            statusText.innerText = "Error encountered: " + cv.exceptionFromPtr(err).msg;
+        }
+    });
+</script>
+</body>
+</html>
